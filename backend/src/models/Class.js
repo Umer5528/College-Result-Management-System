@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 // Examinations, Submissions and Results.
 const subjectSchema = new mongoose.Schema(
   {
+    globalSubjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'GlobalSubject', default: null },
+    globalSubject: { type: mongoose.Schema.Types.ObjectId, ref: 'GlobalSubject', default: null },
+    inheritsGlobalConfig: { type: Boolean, default: true },
     name: { type: String, required: true, trim: true },
     code: { type: String, trim: true, default: '' },
     totalMarks: { type: Number, required: true, min: 1 },
@@ -16,6 +19,11 @@ const subjectSchema = new mongoose.Schema(
 );
 
 subjectSchema.pre('validate', function (next) {
+  if (this.globalSubjectId && !this.globalSubject) {
+    this.globalSubject = this.globalSubjectId;
+  } else if (this.globalSubject && !this.globalSubjectId) {
+    this.globalSubjectId = this.globalSubject;
+  }
   if (this.passingMarks > this.totalMarks) {
     return next(new Error('Passing marks cannot exceed total marks'));
   }

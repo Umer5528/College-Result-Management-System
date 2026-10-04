@@ -17,6 +17,7 @@ const auditLogRoutes = require('./routes/auditLogRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const publicRoutes = require('./routes/publicRoutes');
 const submissionRoutes = require('./routes/submissionRoutes');
+const globalSubjectRoutes = require('./routes/globalSubjectRoutes');
 
 const app = express();
 
@@ -53,6 +54,7 @@ app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/submissions', submissionRoutes);
+app.use('/api/global-subjects', globalSubjectRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

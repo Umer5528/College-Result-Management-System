@@ -36,6 +36,7 @@ const AUDIT_ACTIONS = Object.freeze({
   SUBJECT_ADDED: 'subject_added',
   EXAM_CREATED: 'exam_created',
   EXAM_EDITED: 'exam_edited',
+  EXAM_DELETED: 'exam_deleted',
   SUBMISSION_LINK_GENERATED: 'submission_link_generated',
   SUBMISSION_LINK_DISABLED: 'submission_link_disabled',
   RESULT_SUBMITTED: 'result_submitted',
@@ -51,6 +52,14 @@ const AUDIT_ACTIONS = Object.freeze({
   ADMIN_PASSWORD_RESET: 'admin_password_reset',
   SETTINGS_UPDATED: 'settings_updated',
   STUDENTS_BULK_IMPORTED: 'students_bulk_imported',
+  GLOBAL_SUBJECT_CREATED: 'global_subject_created',
+  GLOBAL_SUBJECT_UPDATED: 'global_subject_updated',
+  GLOBAL_SUBJECT_DELETED: 'global_subject_deleted',
+  SUBJECT_OVERRIDE_CHANGED: 'subject_override_changed',
+  SUBJECT_CONFIGURATIONS_APPLIED: 'subject_configurations_applied',
+  BULK_EXAM_CREATED: 'bulk_exam_created',
+  EXAM_DUPLICATE_SKIPPED: 'exam_duplicate_skipped',
+  GLOBAL_SUBJECT_MIGRATED: 'global_subject_migrated',
 });
 
 module.exports = { ROLES, STUDENT_STATUS, EXAM_STATUS, SUBMISSION_STATUS, AUDIT_ACTIONS };

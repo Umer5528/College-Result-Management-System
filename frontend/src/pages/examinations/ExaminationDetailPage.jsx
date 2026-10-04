@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Link2, Copy, Ban, RefreshCcw, CheckCircle2, Clock, Award, Pencil } from 'lucide-react';
+import { ArrowLeft, Link2, Copy, Ban, RefreshCcw, CheckCircle2, Clock, Award, Pencil, Trash2 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../../components/ui/PageContainer.jsx';
 import Card from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
@@ -8,6 +8,7 @@ import { ExamStatusBadge } from '../../components/ui/Badge.jsx';
 import { PageLoader } from '../../components/ui/Loading.jsx';
 import { ErrorState } from '../../components/ui/EmptyState.jsx';
 import ConfirmModal from '../../components/ui/ConfirmModal.jsx';
+import Modal from '../../components/ui/Modal.jsx';
 import { examinationService } from '../../services/examinationService.js';
 import { useToast } from '../../context/ToastContext.jsx';
 
@@ -20,6 +21,9 @@ export default function ExaminationDetailPage() {
   const [linkUrl, setLinkUrl] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [disableConfirmOpen, setDisableConfirmOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const load = () => {
     setError(false);
@@ -59,10 +63,16 @@ export default function ExaminationDetailPage() {
     }
   };
 
-  const copyLink = () => {
-    if (!linkUrl) return;
-    navigator.clipboard.writeText(linkUrl);
-    toast.success('Link copied to clipboard');
+  const handleDeleteExam = async () => {
+    setDeleting(true);
+    try {
+      await examinationService.delete(id);
+      toast.success(`"${data.examination.name}" has been permanently deleted`);
+      navigate('/examinations', { replace: true });
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Something went wrong. Please try again.');
+      setDeleting(false);
+    }
   };
 
   if (error) return <ErrorState description="We couldn't load this examination." onRetry={load} />;
@@ -74,6 +84,19 @@ export default function ExaminationDetailPage() {
   const total = examination.subjects.length;
   const allSubmitted = submittedCount === total;
 
+  const activeUrl =
+    linkUrl ||
+    (examination?.isLinkActive && examination?.submissionToken
+      ? `${window.location.origin}/submit-result/${examination.submissionToken}`
+      : '');
+
+  const copyLink = () => {
+    const urlToCopy = activeUrl || linkUrl;
+    if (!urlToCopy) return;
+    navigator.clipboard.writeText(urlToCopy);
+    toast.success('Link copied to clipboard');
+  };
+
   return (
     <PageContainer>
       <Link to="/examinations" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 mb-3">
@@ -84,31 +107,45 @@ export default function ExaminationDetailPage() {
         description={`${examination.class?.name}${examination.class?.section ? ` — Section ${examination.class.section}` : ''} · ${new Date(
           examination.resultDate
         ).toDateString()}`}
-        actions={<ExamStatusBadge status={examination.status} />}
+        actions={
+          <>
+            <ExamStatusBadge status={examination.status} />
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteConfirmOpen(true)}>
+              Delete Exam
+            </Button>
+          </>
+        }
       />
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-3 gap-6 min-w-0">
         {/* Submission link management */}
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 min-w-0">
           <h2 className="font-semibold text-gray-900 text-sm mb-3 flex items-center gap-2">
             <Link2 className="h-4 w-4" /> Teacher Submission Link
           </h2>
           {examination.isLinkActive ? (
-            <div className="space-y-3">
+            <div className="space-y-3 min-w-0">
               <p className="text-sm text-gray-500">
                 Share this link with teachers so they can submit results — no account needed.
               </p>
-              {linkUrl ? (
-                <div className="flex items-center gap-2 rounded-xl bg-gray-50 border border-gray-200 px-3.5 py-2.5">
-                  <code className="text-xs text-gray-600 truncate flex-1">{linkUrl}</code>
-                  <Button size="sm" variant="secondary" icon={Copy} onClick={copyLink}>
+              {activeUrl ? (
+                <div className="flex items-center gap-2 rounded-xl bg-gray-50 border border-gray-200 p-2 sm:px-3.5 sm:py-2.5 min-w-0 max-w-full">
+                  <input
+                    type="text"
+                    readOnly
+                    value={activeUrl}
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 min-w-0 w-full bg-transparent text-xs font-mono text-gray-700 outline-none overflow-x-auto whitespace-nowrap cursor-text"
+                    aria-label="Teacher submission link"
+                  />
+                  <Button size="sm" variant="secondary" icon={Copy} onClick={copyLink} className="shrink-0">
                     Copy
                   </Button>
                 </div>
               ) : (
                 <p className="text-xs text-gray-400">The link is active. Regenerate below to get a fresh copy-able URL.</p>
               )}
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" icon={RefreshCcw} loading={actionLoading} onClick={handleGenerateLink}>
                   Regenerate Link
                 </Button>
@@ -128,7 +165,7 @@ export default function ExaminationDetailPage() {
         </Card>
 
         {/* Result action */}
-        <Card>
+        <Card className="min-w-0">
           <h2 className="font-semibold text-gray-900 text-sm mb-3 flex items-center gap-2">
             <Award className="h-4 w-4" /> Result
           </h2>
@@ -192,6 +229,62 @@ export default function ExaminationDetailPage() {
         message="Teachers will no longer be able to use this link to submit results. You can generate a new one anytime."
         confirmLabel="Disable Link"
       />
+
+      <Modal
+        open={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false);
+          setDeleteConfirmText('');
+        }}
+        title="Permanently Delete Examination"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDeleteConfirmOpen(false);
+                setDeleteConfirmText('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              disabled={deleteConfirmText.trim() !== examination.name}
+              loading={deleting}
+              onClick={handleDeleteExam}
+            >
+              Permanently Delete
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p className="text-gray-600">
+            This will <strong>completely and permanently delete</strong> "{examination.name}" — the examination itself,
+            every teacher submission for it, and its finalized result (if any). This cannot be undone.
+          </p>
+          <ul className="list-disc pl-5 text-gray-500 space-y-1">
+            <li>The examination record will vanish entirely</li>
+            <li>All submitted marks and attendance for this exam will be deleted</li>
+            <li>Any finalized result/report for this exam will be deleted</li>
+            <li>The class, subjects, and students are not affected</li>
+          </ul>
+          <div>
+            <label className="label">
+              Type <strong>{examination.name}</strong> to confirm
+            </label>
+            <input
+              className="input"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={examination.name}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+      </Modal>
     </PageContainer>
   );
 }

@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   BookOpen,
+  BookMarked,
   Users,
   FileText,
   ClipboardList,
@@ -30,6 +31,7 @@ export const NAV_SECTIONS = [
     section: 'Academic Management',
     items: [
       { label: 'Classes & Sections', path: '/classes', icon: BookOpen },
+      { label: 'Subject Management', path: '/subjects', icon: BookMarked },
       { label: 'Students', path: '/students', icon: Users },
       { label: 'Examinations', path: '/examinations', icon: FileText },
     ],

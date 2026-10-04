@@ -9,4 +9,7 @@ export const examinationService = {
   generateLink: (id, expiresAt) => api.post(`/examinations/${id}/generate-link`, { expiresAt }).then((r) => r.data),
   disableLink: (id) => api.put(`/examinations/${id}/disable-link`).then((r) => r.data),
   progress: (id) => api.get(`/examinations/${id}/progress`).then((r) => r.data),
+  delete: (id) => api.delete(`/examinations/${id}`).then((r) => r.data),
+  bulkPreview: (payload) => api.post('/examinations/bulk-preview', payload).then((r) => r.data),
+  bulkCreate: (payload) => api.post('/examinations/bulk', payload).then((r) => r.data),
 };

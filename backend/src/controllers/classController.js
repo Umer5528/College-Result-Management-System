@@ -29,6 +29,9 @@ const getClass = asyncHandler(async (req, res) => {
   return ok(res, klass);
 });
 
+const GlobalSubject = require('../models/GlobalSubject');
+const { resolveGlobalSubject } = require('../services/globalSubjectService');
+
 // POST /api/classes
 const createClass = asyncHandler(async (req, res) => {
   const { name, academicSession, description, subjects } = req.body;
@@ -36,10 +39,42 @@ const createClass = asyncHandler(async (req, res) => {
   if (!Array.isArray(subjects) || subjects.length === 0) {
     return fail(res, 'At least one subject is required', 400);
   }
+
+  const resolvedSubjects = [];
   for (const s of subjects) {
-    if (s.passingMarks > s.totalMarks) {
+    if (Number(s.passingMarks) > Number(s.totalMarks)) {
       return fail(res, `Passing marks cannot exceed total marks for subject "${s.name}"`, 400);
     }
+    let globalSubject;
+    if (s.globalSubjectId) {
+      globalSubject = await GlobalSubject.findById(s.globalSubjectId);
+    }
+    if (!globalSubject) {
+      globalSubject = await resolveGlobalSubject({
+        name: s.name,
+        code: s.code,
+        totalMarks: s.totalMarks,
+        passingMarks: s.passingMarks,
+        userId: req.user._id,
+      });
+    }
+
+    const inheritsGlobal =
+      s.inheritsGlobalConfig !== undefined
+        ? Boolean(s.inheritsGlobalConfig)
+        : Number(s.totalMarks) === Number(globalSubject.totalMarks) &&
+          Number(s.passingMarks) === Number(globalSubject.passingMarks);
+
+    resolvedSubjects.push({
+      globalSubjectId: globalSubject._id,
+      globalSubject: globalSubject._id,
+      inheritsGlobalConfig: inheritsGlobal,
+      name: s.name.trim(),
+      code: (s.code || '').trim(),
+      totalMarks: Number(s.totalMarks),
+      passingMarks: Number(s.passingMarks),
+      isActive: s.isActive !== undefined ? Boolean(s.isActive) : true,
+    });
   }
 
   const klass = await Class.create({
@@ -47,7 +82,7 @@ const createClass = asyncHandler(async (req, res) => {
     section: (req.body.section || '').trim(),
     academicSession: academicSession.trim(),
     description: description || '',
-    subjects,
+    subjects: resolvedSubjects,
     createdBy: req.user._id,
   });
 
@@ -91,18 +126,48 @@ const addSubject = asyncHandler(async (req, res) => {
   const klass = await Class.findById(req.params.id);
   if (!klass) return fail(res, 'Class not found', 404);
 
-  const { name, code, totalMarks, passingMarks } = req.body;
+  const { name, code, totalMarks, passingMarks, globalSubjectId, inheritsGlobalConfig } = req.body;
   if (Number(passingMarks) > Number(totalMarks)) {
     return fail(res, 'Passing marks cannot exceed total marks', 400);
   }
 
-  klass.subjects.push({ name, code, totalMarks, passingMarks });
+  let globalSubject;
+  if (globalSubjectId) {
+    globalSubject = await GlobalSubject.findById(globalSubjectId);
+  }
+  if (!globalSubject) {
+    globalSubject = await resolveGlobalSubject({
+      name,
+      code,
+      totalMarks,
+      passingMarks,
+      userId: req.user._id,
+    });
+  }
+
+  const inheritsGlobal =
+    inheritsGlobalConfig !== undefined
+      ? Boolean(inheritsGlobalConfig)
+      : Number(totalMarks) === Number(globalSubject.totalMarks) &&
+        Number(passingMarks) === Number(globalSubject.passingMarks);
+
+  klass.subjects.push({
+    globalSubjectId: globalSubject._id,
+    globalSubject: globalSubject._id,
+    inheritsGlobalConfig: inheritsGlobal,
+    name: name.trim(),
+    code: (code || '').trim(),
+    totalMarks: Number(totalMarks),
+    passingMarks: Number(passingMarks),
+    isActive: true,
+  });
   await klass.save();
 
   await logAction({
     user: req.user,
     action: AUDIT_ACTIONS.SUBJECT_ADDED,
     description: `Added subject "${name}" to class "${klass.name}"`,
+    metadata: { classId: klass._id, globalSubjectId: globalSubject._id, inheritsGlobalConfig: inheritsGlobal },
     req,
   });
 
@@ -117,15 +182,64 @@ const updateSubject = asyncHandler(async (req, res) => {
   const subject = klass.subjects.id(req.params.subjectId);
   if (!subject) return fail(res, 'Subject not found', 404);
 
-  const { name, code, totalMarks, passingMarks, isActive } = req.body;
-  if (name !== undefined) subject.name = name;
-  if (code !== undefined) subject.code = code;
-  if (totalMarks !== undefined) subject.totalMarks = totalMarks;
-  if (passingMarks !== undefined) subject.passingMarks = passingMarks;
+  const { name, code, totalMarks, passingMarks, isActive, inheritsGlobalConfig, globalSubjectId } = req.body;
+
+  if (globalSubjectId && globalSubjectId !== subject.globalSubjectId?.toString()) {
+    subject.globalSubjectId = globalSubjectId;
+    subject.globalSubject = globalSubjectId;
+  }
+
+  // Ensure subject has a global subject link if missing
+  if (!subject.globalSubjectId) {
+    const gs = await resolveGlobalSubject({
+      name: name || subject.name,
+      code: code || subject.code,
+      totalMarks: totalMarks || subject.totalMarks,
+      passingMarks: passingMarks || subject.passingMarks,
+      userId: req.user._id,
+    });
+    subject.globalSubjectId = gs._id;
+    subject.globalSubject = gs._id;
+  }
+
+  const linkedGlobal = await GlobalSubject.findById(subject.globalSubjectId);
+
+  if (inheritsGlobalConfig === true && linkedGlobal) {
+    // Explicitly restore global inheritance!
+    subject.inheritsGlobalConfig = true;
+    subject.totalMarks = linkedGlobal.totalMarks;
+    subject.passingMarks = linkedGlobal.passingMarks;
+    if (linkedGlobal.code) subject.code = linkedGlobal.code;
+  } else if (inheritsGlobalConfig === false) {
+    subject.inheritsGlobalConfig = false;
+  }
+
+  if (name !== undefined) subject.name = name.trim();
+  if (code !== undefined) subject.code = code.trim();
+  if (totalMarks !== undefined) subject.totalMarks = Number(totalMarks);
+  if (passingMarks !== undefined) subject.passingMarks = Number(passingMarks);
   if (isActive !== undefined) subject.isActive = isActive;
 
   if (subject.passingMarks > subject.totalMarks) {
     return fail(res, 'Passing marks cannot exceed total marks', 400);
+  }
+
+  // Detect override if marks differ from linked global subject
+  if (linkedGlobal && (totalMarks !== undefined || passingMarks !== undefined)) {
+    const differs =
+      Number(subject.totalMarks) !== Number(linkedGlobal.totalMarks) ||
+      Number(subject.passingMarks) !== Number(linkedGlobal.passingMarks);
+
+    if (differs && subject.inheritsGlobalConfig) {
+      subject.inheritsGlobalConfig = false;
+      await logAction({
+        user: req.user,
+        action: AUDIT_ACTIONS.SUBJECT_OVERRIDE_CHANGED,
+        description: `Created class override for subject "${subject.name}" in "${klass.name}" (${subject.totalMarks}/${subject.passingMarks} vs global ${linkedGlobal.totalMarks}/${linkedGlobal.passingMarks})`,
+        metadata: { classId: klass._id, subjectId: subject._id, globalSubjectId: linkedGlobal._id },
+        req,
+      });
+    }
   }
 
   await klass.save();

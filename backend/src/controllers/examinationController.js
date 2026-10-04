@@ -203,6 +203,276 @@ const getSubmissionProgress = asyncHandler(async (req, res) => {
   });
 });
 
+// DELETE /api/examinations/:id
+// Permanently and completely removes the examination — unlike deleteResult
+// (which only removes the finalized snapshot), this makes the exam itself
+// vanish: its teacher submissions and any finalized ExamResult are cascaded
+// away too. Does NOT touch the class, subjects, or students. Irreversible —
+// the frontend must get strong explicit confirmation before calling this.
+const deleteExamination = asyncHandler(async (req, res) => {
+  const exam = await Examination.findById(req.params.id);
+  if (!exam) return fail(res, 'Examination not found', 404);
+
+  const ExamResult = require('../models/ExamResult');
+
+  const [{ deletedCount: submissionsDeleted }] = await Promise.all([
+    Submission.deleteMany({ examination: exam._id }),
+  ]);
+  await ExamResult.deleteOne({ examination: exam._id });
+
+  const examName = exam.name;
+  await Examination.deleteOne({ _id: exam._id });
+
+  await logAction({
+    user: req.user,
+    action: AUDIT_ACTIONS.EXAM_DELETED,
+    description: `Permanently deleted examination "${examName}" (${submissionsDeleted} submission(s) removed with it)`,
+    metadata: { examinationId: exam._id, examName, submissionsDeleted },
+    req,
+  });
+
+  return ok(res, null, `"${examName}" has been permanently deleted`);
+});
+
+// POST /api/examinations/bulk-preview
+const bulkPreviewExaminations = asyncHandler(async (req, res) => {
+  const { name, examType, classIds, academicSession, resultDate } = req.body;
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return fail(res, 'Exam name is required', 400);
+  }
+  if (!Array.isArray(classIds) || classIds.length === 0) {
+    return fail(res, 'At least one class must be selected', 400);
+  }
+  if (!resultDate) {
+    return fail(res, 'Result date is required', 400);
+  }
+
+  const classes = await Class.find({ _id: { $in: classIds } });
+  if (classes.length === 0) {
+    return fail(res, 'No valid classes found', 404);
+  }
+
+  const willCreate = [];
+  const alreadyExists = [];
+  const invalidClasses = [];
+
+  for (const klass of classes) {
+    const session = academicSession?.trim() || klass.academicSession;
+    const existing = await Examination.findOne({
+      class: klass._id,
+      academicSession: session,
+      name: name.trim(),
+    });
+
+    if (existing) {
+      alreadyExists.push({
+        classId: klass._id,
+        className: klass.name,
+        section: klass.section,
+        academicSession: session,
+        existingExamId: existing._id,
+        status: existing.status,
+      });
+      continue;
+    }
+
+    const activeSubjects = (klass.subjects || []).filter((s) => s.isActive);
+    if (activeSubjects.length === 0) {
+      invalidClasses.push({
+        classId: klass._id,
+        className: klass.name,
+        section: klass.section,
+        reason: 'Class has no active subjects configured',
+      });
+      continue;
+    }
+
+    willCreate.push({
+      classId: klass._id,
+      className: klass.name,
+      section: klass.section,
+      academicSession: session,
+      subjects: activeSubjects.map((s) => ({
+        subjectId: s._id,
+        name: s.name,
+        code: s.code || '',
+        totalMarks: s.totalMarks,
+        passingMarks: s.passingMarks,
+        inheritsGlobalConfig: s.inheritsGlobalConfig !== false,
+      })),
+    });
+  }
+
+  return ok(res, {
+    canProceed: willCreate.length > 0,
+    willCreate,
+    alreadyExists,
+    invalidClasses,
+    summary: {
+      totalRequested: classIds.length,
+      willCreateCount: willCreate.length,
+      alreadyExistsCount: alreadyExists.length,
+      invalidCount: invalidClasses.length,
+    },
+  });
+});
+
+// POST /api/examinations/bulk
+const bulkCreateExaminations = asyncHandler(async (req, res) => {
+  const { name, examType, classIds, academicSession, resultDate, skipExisting = false, generateLinks = false } = req.body;
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return fail(res, 'Exam name is required', 400);
+  }
+  if (!Array.isArray(classIds) || classIds.length === 0) {
+    return fail(res, 'At least one class must be selected', 400);
+  }
+  if (!resultDate) {
+    return fail(res, 'Result date is required', 400);
+  }
+
+  const classes = await Class.find({ _id: { $in: classIds } });
+  if (classes.length === 0) {
+    return fail(res, 'No valid classes found', 404);
+  }
+
+  const duplicates = [];
+  const eligible = [];
+  const invalid = [];
+
+  for (const klass of classes) {
+    const session = academicSession?.trim() || klass.academicSession;
+    const existing = await Examination.findOne({
+      class: klass._id,
+      academicSession: session,
+      name: name.trim(),
+    });
+
+    if (existing) {
+      duplicates.push({
+        classId: klass._id,
+        className: klass.name,
+        section: klass.section,
+        existingExamId: existing._id,
+      });
+    } else {
+      const activeSubjects = (klass.subjects || []).filter((s) => s.isActive);
+      if (activeSubjects.length === 0) {
+        invalid.push({
+          classId: klass._id,
+          className: klass.name,
+          section: klass.section,
+          reason: 'No active subjects',
+        });
+      } else {
+        eligible.push({ klass, session, activeSubjects });
+      }
+    }
+  }
+
+  // Duplicate protection: if duplicates exist and admin didn't explicitly choose skipExisting
+  if (duplicates.length > 0 && !skipExisting) {
+    return fail(
+      res,
+      `Examination "${name.trim()}" already exists for ${duplicates.length} of the selected classes.`,
+      409,
+      {
+        alreadyExists: duplicates,
+        willCreateCount: eligible.length,
+      }
+    );
+  }
+
+  if (eligible.length === 0) {
+    return fail(res, 'No new examinations to create (all selected classes either already exist or have no subjects)', 400, {
+      alreadyExists: duplicates,
+      invalid,
+    });
+  }
+
+  // Create examinations inside a transaction
+  const mongoose = require('mongoose');
+  const mongoSession = await mongoose.startSession();
+  const createdExams = [];
+
+  try {
+    await mongoSession.withTransaction(async () => {
+      for (const { klass, session: sess, activeSubjects } of eligible) {
+        const token = generateSecureToken();
+        const exam = new Examination({
+          name: name.trim(),
+          examType: examType || 'Monthly Test',
+          class: klass._id,
+          academicSession: sess,
+          resultDate,
+          subjects: activeSubjects.map((s) => ({
+            subject: s._id,
+            name: s.name,
+            code: s.code || '',
+            totalMarks: s.totalMarks,
+            passingMarks: s.passingMarks,
+          })),
+          status: generateLinks ? EXAM_STATUS.SUBMISSION_OPEN : EXAM_STATUS.DRAFT,
+          submissionToken: token,
+          isLinkActive: Boolean(generateLinks),
+          createdBy: req.user._id,
+        });
+
+        await exam.save({ session: mongoSession });
+
+        await logAction({
+          user: req.user,
+          action: AUDIT_ACTIONS.EXAM_CREATED,
+          description: `Created examination "${exam.name}" for class "${klass.name}" via bulk creation`,
+          metadata: { examinationId: exam._id, bulk: true },
+          req,
+        });
+
+        createdExams.push({
+          _id: exam._id,
+          name: exam.name,
+          className: klass.name,
+          section: klass.section,
+          submissionToken: exam.submissionToken,
+          subjectsCount: exam.subjects.length,
+          status: exam.status,
+        });
+      }
+
+      await logAction({
+        user: req.user,
+        action: AUDIT_ACTIONS.BULK_EXAM_CREATED,
+        description: `Bulk created ${createdExams.length} examination(s) for "${name.trim()}"`,
+        metadata: {
+          examName: name.trim(),
+          createdCount: createdExams.length,
+          skippedDuplicatesCount: duplicates.length,
+          createdExamIds: createdExams.map((e) => e._id),
+          skippedDuplicates: duplicates,
+        },
+        req,
+      });
+    });
+  } finally {
+    await mongoSession.endSession();
+  }
+
+  return created(
+    res,
+    {
+      createdExaminations: createdExams,
+      skippedDuplicates: duplicates,
+      summary: {
+        totalRequested: classIds.length,
+        createdCount: createdExams.length,
+        skippedCount: duplicates.length,
+      },
+    },
+    `Successfully created ${createdExams.length} examination(s)${duplicates.length > 0 ? ` (${duplicates.length} duplicate(s) skipped)` : ''}`
+  );
+});
+
 module.exports = {
   listExaminations,
   getExamination,
@@ -212,4 +482,7 @@ module.exports = {
   generateSubmissionLink,
   disableSubmissionLink,
   getSubmissionProgress,
+  deleteExamination,
+  bulkPreviewExaminations,
+  bulkCreateExaminations,
 };

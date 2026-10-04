@@ -13,23 +13,103 @@ import { EmptyState, ErrorState } from '../../components/ui/EmptyState.jsx';
 import { classService } from '../../services/classService.js';
 import { useToast } from '../../context/ToastContext.jsx';
 
+import { globalSubjectService } from '../../services/globalSubjectService.js';
+
 function SubjectFormModal({ open, onClose, classId, subject, onSaved }) {
   const toast = useToast();
   const isEdit = !!subject;
-  const [form, setForm] = useState({ name: '', code: '', totalMarks: 100, passingMarks: 40 });
+  const [form, setForm] = useState({
+    globalSubjectId: '',
+    name: '',
+    code: '',
+    totalMarks: 100,
+    passingMarks: 40,
+    inheritsGlobalConfig: true,
+  });
+  const [globalSubjects, setGlobalSubjects] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (open) {
+      globalSubjectService.list({ activeOnly: 'true' }).then((res) => {
+        setGlobalSubjects(res.data || []);
+      }).catch(() => {});
+    }
+  }, [open]);
+
+  useEffect(() => {
     if (subject) {
-      setForm({ name: subject.name, code: subject.code || '', totalMarks: subject.totalMarks, passingMarks: subject.passingMarks });
+      setForm({
+        globalSubjectId: subject.globalSubjectId || subject.globalSubject || '',
+        name: subject.name,
+        code: subject.code || '',
+        totalMarks: subject.totalMarks,
+        passingMarks: subject.passingMarks,
+        inheritsGlobalConfig: subject.inheritsGlobalConfig !== false,
+      });
     } else {
-      setForm({ name: '', code: '', totalMarks: 100, passingMarks: 40 });
+      setForm({
+        globalSubjectId: '',
+        name: '',
+        code: '',
+        totalMarks: 100,
+        passingMarks: 40,
+        inheritsGlobalConfig: true,
+      });
     }
     setErrors({});
   }, [subject, open]);
 
-  const handleChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  const handleGlobalSelect = (e) => {
+    const selectedId = e.target.value;
+    if (!selectedId) {
+      setForm((f) => ({ ...f, globalSubjectId: '', inheritsGlobalConfig: false }));
+      return;
+    }
+    const gs = globalSubjects.find((s) => s._id === selectedId);
+    if (gs) {
+      setForm((f) => ({
+        ...f,
+        globalSubjectId: gs._id,
+        name: gs.name,
+        code: gs.code || '',
+        totalMarks: gs.totalMarks,
+        passingMarks: gs.passingMarks,
+        inheritsGlobalConfig: true,
+      }));
+    }
+  };
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setForm((f) => {
+      const next = { ...f, [name]: value };
+      // If marks are edited and differed from global, it becomes an override
+      if (f.globalSubjectId && (name === 'totalMarks' || name === 'passingMarks')) {
+        const gs = globalSubjects.find((s) => s._id === f.globalSubjectId);
+        if (gs) {
+          const isMatch = Number(name === 'totalMarks' ? value : f.totalMarks) === Number(gs.totalMarks) &&
+                          Number(name === 'passingMarks' ? value : f.passingMarks) === Number(gs.passingMarks);
+          next.inheritsGlobalConfig = isMatch;
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleResetToGlobal = () => {
+    if (!form.globalSubjectId) return;
+    const gs = globalSubjects.find((s) => s._id === form.globalSubjectId);
+    if (gs) {
+      setForm((f) => ({
+        ...f,
+        totalMarks: gs.totalMarks,
+        passingMarks: gs.passingMarks,
+        inheritsGlobalConfig: true,
+      }));
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,6 +126,8 @@ function SubjectFormModal({ open, onClose, classId, subject, onSaved }) {
         code: form.code.trim(),
         totalMarks: Number(form.totalMarks),
         passingMarks: Number(form.passingMarks),
+        globalSubjectId: form.globalSubjectId || undefined,
+        inheritsGlobalConfig: form.inheritsGlobalConfig,
       };
       if (isEdit) {
         await classService.updateSubject(classId, subject._id, payload);
@@ -80,6 +162,24 @@ function SubjectFormModal({ open, onClose, classId, subject, onSaved }) {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {globalSubjects.length > 0 && (
+          <div>
+            <label className="label">Link to Centralized Global Subject</label>
+            <select
+              className="select w-full"
+              value={form.globalSubjectId}
+              onChange={handleGlobalSelect}
+            >
+              <option value="">-- Custom Subject (No Global Link) --</option>
+              {globalSubjects.map((gs) => (
+                <option key={gs._id} value={gs._id}>
+                  {gs.name} {gs.code ? `(${gs.code})` : ''} — {gs.totalMarks} Total / {gs.passingMarks} Pass
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <Input label="Subject Name" name="name" value={form.name} onChange={handleChange} error={errors.name} required />
         <Input label="Subject Code (optional)" name="code" value={form.code} onChange={handleChange} />
         <div className="grid grid-cols-2 gap-4">
@@ -95,6 +195,24 @@ function SubjectFormModal({ open, onClose, classId, subject, onSaved }) {
             required
           />
         </div>
+
+        {form.globalSubjectId && (
+          <div className="rounded-xl p-3 bg-gray-50 border border-gray-100 flex items-center justify-between text-xs">
+            <span className="text-gray-600">
+              Configuration Status:{' '}
+              {form.inheritsGlobalConfig ? (
+                <strong className="text-brand-600 font-semibold">Inherits Global Subject Defaults</strong>
+              ) : (
+                <strong className="text-amber-700 font-semibold">Class Override (Custom Marks)</strong>
+              )}
+            </span>
+            {!form.inheritsGlobalConfig && (
+              <Button type="button" size="sm" variant="ghost" onClick={handleResetToGlobal}>
+                Reset to Global
+              </Button>
+            )}
+          </div>
+        )}
       </form>
     </Modal>
   );
@@ -175,6 +293,7 @@ export default function ClassDetailPage() {
                   <th>Code</th>
                   <th>Total Marks</th>
                   <th>Passing Marks</th>
+                  <th>Configuration</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
@@ -186,6 +305,11 @@ export default function ClassDetailPage() {
                     <td className="text-gray-500">{s.code || '—'}</td>
                     <td>{s.totalMarks}</td>
                     <td>{s.passingMarks}</td>
+                    <td>
+                      <Badge tone={s.inheritsGlobalConfig !== false ? 'info' : 'warning'}>
+                        {s.inheritsGlobalConfig !== false ? 'Inherited' : 'Override'}
+                      </Badge>
+                    </td>
                     <td>
                       <Badge tone={s.isActive ? 'success' : 'neutral'}>{s.isActive ? 'Active' : 'Inactive'}</Badge>
                     </td>

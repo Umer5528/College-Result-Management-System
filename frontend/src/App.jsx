@@ -20,6 +20,7 @@ import OverallReportsPage from './pages/reports/OverallReportsPage.jsx';
 import AnalyticsPage from './pages/analytics/AnalyticsPage.jsx';
 import AdminManagementPage from './pages/admin/AdminManagementPage.jsx';
 import AuditLogsPage from './pages/audit/AuditLogsPage.jsx';
+import GlobalSubjectManagementPage from './pages/admin/GlobalSubjectManagementPage.jsx';
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/classes" element={<ClassesPage />} />
         <Route path="/classes/:id" element={<ClassDetailPage />} />
+        <Route path="/subjects" element={<GlobalSubjectManagementPage />} />
         <Route path="/students" element={<StudentsPage />} />
         <Route path="/students/:id" element={<StudentProfilePage />} />
         <Route path="/examinations" element={<ExaminationsPage />} />

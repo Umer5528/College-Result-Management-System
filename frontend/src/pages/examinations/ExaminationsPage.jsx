@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Copy, FileText } from 'lucide-react';
+import { Plus, Copy, FileText, Layers } from 'lucide-react';
 import { PageContainer, PageHeader } from '../../components/ui/PageContainer.jsx';
 import Card from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
@@ -11,6 +11,7 @@ import { examinationService } from '../../services/examinationService.js';
 import { classService } from '../../services/classService.js';
 import ExamWizardModal from './ExamWizardModal.jsx';
 import CreateFromPreviousModal from './CreateFromPreviousModal.jsx';
+import BulkExamModal from './BulkExamModal.jsx';
 
 function ProgressBar({ submitted, total }) {
   const pct = total > 0 ? Math.round((submitted / total) * 100) : 0;
@@ -31,6 +32,7 @@ export default function ExaminationsPage() {
   const [exams, setExams] = useState(null);
   const [error, setError] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [fromPreviousExam, setFromPreviousExam] = useState(null);
 
   useEffect(() => {
@@ -53,9 +55,14 @@ export default function ExaminationsPage() {
         title="Examinations"
         description="Create exams, generate secure teacher links, and track submissions."
         actions={
-          <Button icon={Plus} onClick={() => setWizardOpen(true)}>
-            Create Exam
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" icon={Layers} onClick={() => setBulkModalOpen(true)}>
+              Bulk Create Exams
+            </Button>
+            <Button icon={Plus} onClick={() => setWizardOpen(true)}>
+              Create Exam
+            </Button>
+          </div>
         }
       />
 
@@ -69,9 +76,14 @@ export default function ExaminationsPage() {
           title="No examinations yet"
           description="Create your first examination to start collecting results."
           action={
-            <Button icon={Plus} onClick={() => setWizardOpen(true)}>
-              Create Exam
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" icon={Layers} onClick={() => setBulkModalOpen(true)}>
+                Bulk Create Exams
+              </Button>
+              <Button icon={Plus} onClick={() => setWizardOpen(true)}>
+                Create Exam
+              </Button>
+            </div>
           }
         />
       ) : (
@@ -122,6 +134,12 @@ export default function ExaminationsPage() {
       )}
 
       <ExamWizardModal open={wizardOpen} onClose={() => setWizardOpen(false)} classes={classes} onCreated={load} />
+      <BulkExamModal
+        open={bulkModalOpen}
+        onClose={() => setBulkModalOpen(false)}
+        classes={classes}
+        onCreated={load}
+      />
       <CreateFromPreviousModal
         open={!!fromPreviousExam}
         onClose={() => setFromPreviousExam(null)}
