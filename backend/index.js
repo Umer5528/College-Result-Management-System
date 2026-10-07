@@ -1,4 +1,4 @@
-const app = require("./app");
+const app = require("./src/app.js");
 const connectDB = require("./config/db");
 
 module.exports = async (req, res) => {
